@@ -77,6 +77,7 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         Note that the namespace becomes part of the reflector name.
         """
+        self._ensure_namespace()
         return self._start_reflector(
             self._namespace_default() + "-events",
             EventReflector,
@@ -95,14 +96,15 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         Note that the namespace becomes part of the reflector name.
         """
+        self._ensure_namespace()
         return self._start_reflector(self._namespace_default() + "-pods",
                                      PodReflector, replace=replace)
 
     @gen.coroutine
-    def _start(self):
+    def start(self):
         """Start the user's pod"""
         self._ensure_namespace()
-        return super()._start()
+        return super().start()
 
     @gen.coroutine
     def stop(self, now=False):
