@@ -192,29 +192,32 @@ class NamespacedKubeSpawner(KubeSpawner):
                     self.log.info("Found NFS volume '%s'" % pv.metadata.name)
         self._nfs_volumes = vols
 
-    def _create_pvc_for_nfs_pv(self, pv, pvprefix="", pvsuffix=""):
+    def _create_pvc_for_nfs_pv(self, pvc, pvprefix="", pvsuffix=""):
         namespace = self._namespace_default()
         if not self._nfs_volumes:
             self.log.info("Creating NFS volume list.")
             self._refresh_nfs_volumes()
         vnames = [x.metadata.name for x in self._nfs_volumes]
+        pv = pvc
         if pv not in vnames:
-            if (pvprefix + pv + pvsuffix) not in vnames:
+            pv = pvprefix + pv + pvsuffix
+            if pv not in vnames:
                 raise RuntimeError("No physical volume '%s' for PVC" % pv)
         spec = client.V1PersistentVolumeClaimSpec(volume_name=pv)
-        pvc = client.V1PersistentVolumeClaim(spec=spec)
+        md = client.V1ObjectMeta(name=pvc)
+        pvc = client.V1PersistentVolumeClaim(spec=spec, metadata=md)
         self.log.info("Creating PVC '%s' in namespace '%s'" % (pv, namespace))
         try:
             self.api.create_namespaced_persistent_volume_claim(namespace,
                                                                pvc)
         except ApiException as e:
             if e.status != 409:
-                self.log.exception("Create PVC '%s' " % pv +
+                self.log.exception("Create PVC '%s' " % pvc +
                                    "in namespace '%s' " % namespace +
                                    "failed: %s" % str(e))
                 raise
             else:
-                self.log.info("PVC '%s' " % pv +
+                self.log.info("PVC '%s' " % pvc +
                               "in namespace '%s' already exists." % namespace)
 
     def _check_pods(self, items):
