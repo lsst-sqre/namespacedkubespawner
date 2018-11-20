@@ -202,7 +202,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             if (pvprefix + pv + pvsuffix) not in vnames:
                 raise RuntimeError("No physical volume '%s' for PVC" % pv)
         spec = client.V1PersistentVolumeClaimSpec(volume_name=pv)
-        pvc = client.V1PersistentVolumeClaim(spec)
+        pvc = client.V1PersistentVolumeClaim(spec=spec)
         self.log.info("Creating PVC '%s' in namespace '%s'" % (pv, namespace))
         try:
             self.api.create_namespaced_persistent_volume_claim(namespace,
