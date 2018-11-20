@@ -191,14 +191,15 @@ class NamespacedKubeSpawner(KubeSpawner):
                     vols.append(pv)
         self._nfs_volumes = vols
 
-    def _create_pvc_for_nfs_pv(self, pv):
+    def _create_pvc_for_nfs_pv(self, pv, pvprefix=""):
         namespace = self._namespace_default()
         if not self._nfs_volumes:
             self.log.info("Creating NFS volume list.")
             self._refresh_nfs_volumes()
         vnames = [x.metadata.name for x in self._nfs_volumes]
         if pv not in vnames:
-            raise RuntimeError("No physical volume '%s' for PVC" % pv)
+            if (pvprefix + pv) not in vnames:
+                raise RuntimeError("No physical volume '%s' for PVC" % pv)
         spec = client.V1PersistentVolumeClaimSpec(volume_name=pv)
         pvc = client.V1PersistentVolumeClaim(spec)
         self.log.info("Creating PVC '%s' in namespace '%s'" % (pv, namespace))
