@@ -44,6 +44,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
         self.namespace = self._namespace_default()
+
         if not _mock:
             self._ensure_namespace()
             self._start_watching_pods()  # Need to do it once per user
@@ -128,8 +129,8 @@ class NamespacedKubeSpawner(KubeSpawner):
             self.api.create_namespace(ns)
         except ApiException as e:
             if e.status != 409:
-                self.log.exception("Create namespace '%s' " % namespace,
-                                   "failed: %s", str(e))
+                estr = "Create namespace '%s' failed: %s" % (ns, str(e))
+                self.log.exception(estr)
                 raise
             else:
                 self.log.info("Namespace '%s' already exists." % namespace)
@@ -138,7 +139,7 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     async def _async_delete_namespace(self, delay=75):
         namespace = self._namespace_default()
-        self.log.info("Waiting %d seconds " % delay,
+        self.log.info("Waiting %d seconds " % delay +
                       "for pods in namespace '%s' to exit." % namespace)
         await asyncio.sleep(delay)
         await self.asynchronize(self._maybe_delete_namespace())
@@ -155,7 +156,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             self.log.info("Not deleting namespace '%s'" % namespace)
             return False
         if self.service_account:
-            self.log.info("Deleting service ",
+            self.log.info("Deleting service " +
                           "account '%s'" % self.service_account)
             self._delete_namespaced_service_account()
         self.log.info("Deleting namespace '%s'" % namespace)
@@ -169,7 +170,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                 phase = i.status.phase
                 if (phase is "Running" or phase is "Unknown"
                         or phase is "Pending"):
-                    self.log.info("Pod in state '%s'; " % phase,
+                    self.log.info("Pod in state '%s'; " % phase +
                                   "cannot delete namespace '%s'." % namespace)
                     return False
         return True
@@ -213,12 +214,12 @@ class NamespacedKubeSpawner(KubeSpawner):
                 body=svcacct)
         except ApiException as e:
             if e.status != 409:
-                self.log.exception("Create service account '%s' " % account,
-                                   "in namespace '%s' " % namespace,
+                self.log.exception("Create service account '%s' " % account +
+                                   "in namespace '%s' " % namespace +
                                    "failed: %s" % str(e))
                 raise
             else:
-                self.log.info("Service account '%s' " % account,
+                self.log.info("Service account '%s' " % account +
                               "'%s' already exists." % namespace)
         if not self.rbacapi:
             self.rbacapi = shared_client(client.RbacAuthorizationV1Api)
@@ -228,12 +229,12 @@ class NamespacedKubeSpawner(KubeSpawner):
                 role)
         except ApiException as e:
             if e.status != 409:
-                self.log.exception("Create role '%s' " % account,
-                                   "in namespace '%s' " % namespace,
+                self.log.exception("Create role '%s' " % account +
+                                   "in namespace '%s' " % namespace +
                                    "failed: %s" % str(e))
                 raise
             else:
-                self.log.info("Role '%s' " % account,
+                self.log.info("Role '%s' " % account +
                               "already exists in '%s'." % namespace)
         try:
             self.rbacapi.create_namespaced_role_binding(
@@ -241,19 +242,19 @@ class NamespacedKubeSpawner(KubeSpawner):
                 rolebinding)
         except ApiException as e:
             if e.status != 409:
-                self.log.exception("Create rolebinding '%s'" % account,
-                                   "in namespace '%s' " % namespace,
+                self.log.exception("Create rolebinding '%s'" % account +
+                                   "in namespace '%s' " % namespace +
                                    "failed: %s", str(e))
                 raise
             else:
-                self.log.info("Rolebinding '%s' " % account,
+                self.log.info("Rolebinding '%s' " % account +
                               "already exists in '%s'." % namespace)
 
     def _delete_namespaced_service_account(self):
         namespace = self._namespace_default()
         account = self.service_account
         dopts = client.V1DeleteOptions()
-        self.log_info("Deleting service accounts/role/rolebinding ",
+        self.log_info("Deleting service accounts/role/rolebinding " +
                       "for %s" % namespace)
         self.rbacapi.delete_namespaced_role_binding(
             account,
