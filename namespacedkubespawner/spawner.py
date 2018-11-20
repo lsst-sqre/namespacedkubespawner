@@ -120,10 +120,13 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         If we create the namespace, we also create (if needed) a ServiceAccount
         within it to allow the user pod to spawn dask pods."""
+        self.log.info("_ensure_namespace()")
         namespace = self._namespace_default()
+        self.log.info("_ensure_namespace(): namespace '%s'" % namespace)
         ns = client.V1Namespace(
             metadata=client.V1ObjectMeta(name=namespace))
         try:
+            self.log.info("Creating namespace '%s'" % namespace)
             yield self.asynchronize(
                 self.api.create_namespace,
                 ns)
