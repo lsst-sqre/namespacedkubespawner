@@ -188,7 +188,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                     vols.append(pv)
         self._nfs_volumes = vols
 
-    def _create_pvc_for__nfs_pv(self, pv):
+    def _create_pvc_for_nfs_pv(self, pv):
         namespace = self._namespace_default()
         if not self._nfs_volumes:
             self.log.info("Creating NFS volume list.")
