@@ -45,6 +45,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         super().__init__(*args, **kwargs)
         self.namespace = self._namespace_default()
         if not _mock:
+            self._ensure_namespace()
             self._start_watching_pods()  # Need to do it once per user
             if self.events_enabled:
                 self._start_watching_events()
@@ -77,7 +78,6 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         Note that the namespace becomes part of the reflector name.
         """
-        self._ensure_namespace()
         return self._start_reflector(
             self._namespace_default() + "-events",
             EventReflector,
@@ -96,13 +96,11 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         Note that the namespace becomes part of the reflector name.
         """
-        self._ensure_namespace()
         return self._start_reflector(self._namespace_default() + "-pods",
                                      PodReflector, replace=replace)
 
     def start(self):
         """Start the user's pod"""
-        self._ensure_namespace()
         return super().start()
 
     @gen.coroutine
@@ -120,16 +118,14 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         If we create the namespace, we also create (if needed) a ServiceAccount
         within it to allow the user pod to spawn dask pods."""
-        self.log.info("_ensure_namespace()")
+        self.log.info("Entered _ensure_namespace()")
         namespace = self._namespace_default()
         self.log.info("_ensure_namespace(): namespace '%s'" % namespace)
         ns = client.V1Namespace(
             metadata=client.V1ObjectMeta(name=namespace))
         try:
             self.log.info("Creating namespace '%s'" % namespace)
-            yield self.asynchronize(
-                self.api.create_namespace,
-                ns)
+            self.api.create_namespace(ns)
         except ApiException as e:
             if e.status != 409:
                 self.log.exception("Create namespace '%s' " % namespace,
