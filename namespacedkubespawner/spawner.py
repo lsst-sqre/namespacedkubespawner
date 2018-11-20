@@ -189,7 +189,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                 if (pv and pv.spec and hasattr(pv.spec, "nfs") and
                         pv.spec.nfs):
                     vols.append(pv)
-                    self.log("Found NFS volume '%s'" % pv.metadata.name)
+                    self.log.info("Found NFS volume '%s'" % pv.metadata.name)
         self._nfs_volumes = vols
 
     def _create_pvc_for_nfs_pv(self, pv, pvprefix="", pvsuffix=""):
