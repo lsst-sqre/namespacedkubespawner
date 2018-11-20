@@ -223,7 +223,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                               "in namespace '%s' already exists." % namespace)
         if not self.rbacapi:
             self.log.info("Creating RBAC API Client.")
-            self.rbacapi = shared_client('RbacV1Api')
+            self.rbacapi = shared_client('RbacAuthorizationV1Api')
         try:
             self.rbacapi.create_namespaced_role(
                 namespace,
