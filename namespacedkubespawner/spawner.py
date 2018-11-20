@@ -179,12 +179,15 @@ class NamespacedKubeSpawner(KubeSpawner):
                                                                    dopts)
 
     def _refresh_nfs_volumes(self):
-        # This may be LSST-specific
+        # This may be LSST-specific.  We're building a list of all NFS-
+        #  mounted PVs, so we can later create namespaced PVCs for each of
+        #  them.
         pvlist = self.api.list_persistent_volume()
         vols = []
         if pvlist and pvlist.items and len(pvlist.items) > 0:
             for pv in pvlist.items:
-                if pv and pv.spec and "nfs" in pv.spec and pv.spec.nfs:
+                if (pv and pv.spec and hasattr(pv.spec, "nfs") and
+                        pv.spec.nfs):
                     vols.append(pv)
         self._nfs_volumes = vols
 
