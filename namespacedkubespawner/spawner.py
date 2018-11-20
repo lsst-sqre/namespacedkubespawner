@@ -220,9 +220,10 @@ class NamespacedKubeSpawner(KubeSpawner):
                 raise
             else:
                 self.log.info("Service account '%s' " % account +
-                              "'%s' already exists." % namespace)
+                              "in namespace '%s' already exists." % namespace)
         if not self.rbacapi:
-            self.rbacapi = shared_client(client.RbacAuthorizationV1Api)
+            self.log.info("Creating RBAC API Client.")
+            self.rbacapi = shared_client('RbacV1Api')
         try:
             self.rbacapi.create_namespaced_role(
                 namespace,
@@ -235,7 +236,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                 raise
             else:
                 self.log.info("Role '%s' " % account +
-                              "already exists in '%s'." % namespace)
+                              "already exists in namespace '%s'." % namespace)
         try:
             self.rbacapi.create_namespaced_role_binding(
                 namespace,
