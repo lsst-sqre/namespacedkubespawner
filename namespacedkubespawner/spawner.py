@@ -100,7 +100,6 @@ class NamespacedKubeSpawner(KubeSpawner):
         return self._start_reflector(self._namespace_default() + "-pods",
                                      PodReflector, replace=replace)
 
-    @gen.coroutine
     def start(self):
         """Start the user's pod"""
         self._ensure_namespace()
