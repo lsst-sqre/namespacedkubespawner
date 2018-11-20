@@ -195,10 +195,10 @@ class NamespacedKubeSpawner(KubeSpawner):
             role_ref=client.V1RoleRef(api_group="rbac.authorization.k8s.io",
                                       kind="Role",
                                       name=account),
-            subjects=client.V1Subject(
+            subjects=[client.V1Subject(
                 kind="ServiceAccount",
                 name=account,
-                namespace=namespace)
+                namespace=namespace)]
         )
         return svcacct, role, rolebinding
 
