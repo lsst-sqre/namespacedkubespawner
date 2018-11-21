@@ -38,23 +38,24 @@ class NamespacedKubeSpawner(KubeSpawner):
     _nfs_volumes = None
     _mynamespace = None
     rbacapi = None  # We need an RBAC client
-    # Reflectors now have namespaces built into their names
+    # Reflectors now have user namespaces built into their names
 
     @property
     def pod_reflector(self):
         """alias to reflectors[namespace + '-pods']"""
-        return self.reflectors[self._namespace_default() + '-pods']
+        return self.reflectors[self.get_user_namespace() + '-pods']
 
     @property
     def event_reflector(self):
         """alias to reflectors[namespace + '-events']"""
         if self.events_enabled:
-            return self.reflectors[self._namespace_default() + '-events']
+            return self.reflectors[self.get_user_namespace() + '-events']
 
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
-        self.namespace = self._namespace_default()
+        self._refresh_mynamespace()
+        self.namespace = self.get_user_namespace()
 
         if not _mock:
             self._ensure_namespace()
@@ -62,22 +63,18 @@ class NamespacedKubeSpawner(KubeSpawner):
             if self.events_enabled:
                 self._start_watching_events()
 
-    @default('namespace')
-    def _namespace_default(self):
-        """
-        Set namespace default to user name if we have one, otherwise
-        set namespace default to current namespace if running in a k8s cluster
-
-        If not in a k8s cluster with service accounts enabled, default to
-        `default`
-        """
+    def get_user_namespace(self):
+        """Return namespace for user pods (and ancillary objects)"""
+        defname = self._namespace_default()
+        # We concatenate the current namespace and the name so that we
+        #  can continue having multiple Jupyter instances in the same
+        #  k8s cluster in different namespaces.  The user namespaces must
+        #  themselves be namespaced, as it were.
+        defname = self._mynamespace
         if self.user and self.user.name:
-            return self.user.name
-        mns = self._refresh_mynamespace()
-        if mns:
-            self._mynamespace = mns
-            return mns
-        return 'default'
+            uname = self.user.name
+            return defname + "-" + uname
+        return defname
 
     def _refresh_mynamespace(self):
         self._mynamespace = self._get_mynamespace()
@@ -101,7 +98,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         Note that the namespace becomes part of the reflector name.
         """
         return self._start_reflector(
-            self._namespace_default() + "-events",
+            self._get_user_namespace() + "-events",
             EventReflector,
             fields={"involvedObject.kind": "Pod"},
             replace=replace,
@@ -118,7 +115,7 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         Note that the namespace becomes part of the reflector name.
         """
-        return self._start_reflector(self._namespace_default() + "-pods",
+        return self._start_reflector(self._get_user_namespace() + "-pods",
                                      PodReflector, replace=replace)
 
     def start(self):
@@ -127,6 +124,8 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     @gen.coroutine
     def stop(self, now=False):
+        """Stop the user's pod, and try to delete ancillary objects and
+        finally the namespace"""
         rc = super().stop()
         delled = self._maybe_delete_namespace()
         if not delled:
@@ -134,16 +133,17 @@ class NamespacedKubeSpawner(KubeSpawner):
         return rc
 
     def _ensure_namespace(self):
-        """And here we make sure that the namespace exists, creating it if
+        """Here we make sure that the namespace exists, creating it if
         it does not.  That requires a ClusterRole that can list and create
         namespaces.
 
         We clone the (static) NFS PVs and then attach namespaced PVCs to them.
+        Thus the role needs to be able to list and create PVs and PVCs.
 
         If we create the namespace, we also create (if needed) a ServiceAccount
         within it to allow the user pod to spawn dask pods."""
         self.log.info("Entered _ensure_namespace()")
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         self.log.info("_ensure_namespace(): namespace '%s'" % namespace)
         ns = client.V1Namespace(
             metadata=client.V1ObjectMeta(name=namespace))
@@ -163,7 +163,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             self._ensure_namespaced_service_account()
 
     async def _async_delete_namespace(self, delay=75):
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         self.log.info("Waiting %d seconds " % delay +
                       "for pods in namespace '%s' to exit." % namespace)
         await asyncio.sleep(delay)
@@ -171,8 +171,10 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     def _maybe_delete_namespace(self):
         """Here we try to delete the namespace.  If it has no running pods,
-        we can delete it and its associated ServiceAccount, if any."""
-        namespace = self._namespace_default()
+        we can delete it, as well as our shadow PVs we created.
+
+        This requires a cluster role that can delete namespaces and PVs."""
+        namespace = self._get_user_namespace()
         podlist = self.api.list_namespaced_pod(namespace)
         clear_to_delete = True
         if podlist and podlist.items and len(podlist.items) > 0:
@@ -195,7 +197,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         return True
 
     def _destroy_pvcs(self):
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         pvclist = self.api.list_namespaced_persistent_volume_claim(namespace)
         if pvclist and pvclist.items and len(pvclist.items) > 0:
             dopts = client.V1DeleteOptions()
@@ -248,13 +250,13 @@ class NamespacedKubeSpawner(KubeSpawner):
         #
         # Then when a new user namespace is created, we duplicate the NFS
         #  PV to one with the new namespace appended
-        #  (e.g. "jld-fileserver-projects-athornton")
+        #  (e.g. "jld-fileserver-projects-jupyterlabdemo-athornton")
         #
         # Then we can bind PVCs to the new (effectively, namespaced) PVs
         #  and everything works.
         self.log.info("Replicating NFS PVs")
         mns = self._get_mynamespace()
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         suffix = ""
         if mns:
             suffix = "-" + mns
@@ -286,7 +288,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                 self.log.info("PV '%s' already exists." % ns_name)
 
     def _destroy_namespaced_pvs(self):
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         if (not namespace or namespace == self._mynamespace or
                 namespace == "default"):
             self.log.error("Will not destroy PVs for " +
@@ -299,7 +301,7 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     def _create_pvcs_for_pvs(self):
         self.log.info("Creating PVCs for PVs.")
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         suffix = "-" + namespace
         vols = self._get_nfs_volumes(suffix=suffix)
         for vol in vols:
@@ -338,7 +340,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                                   "already exists.")
 
     def _check_pods(self, items):
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         for i in items:
             if i and i.status:
                 phase = i.status.phase
@@ -350,7 +352,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         return True
 
     def _make_account_objects(self):
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         account = self.service_account
         md = client.V1ObjectMeta(name=account)
         svcacct = client.V1ServiceAccount(metadata=md)
@@ -379,7 +381,7 @@ class NamespacedKubeSpawner(KubeSpawner):
     def _ensure_namespaced_service_account(self):
         """Create a service account with role and rolebinding to allow it
         to manipulate pods in the namespace."""
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         account = self.service_account
         svcacct, role, rolebinding = self._make_account_objects()
         try:
@@ -426,7 +428,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                               "already exists in '%s'." % namespace)
 
     def _delete_namespaced_service_account(self):
-        namespace = self._namespace_default()
+        namespace = self._get_user_namespace()
         account = self.service_account
         dopts = client.V1DeleteOptions()
         self.log_info("Deleting service accounts/role/rolebinding " +
