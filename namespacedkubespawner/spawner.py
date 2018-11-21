@@ -207,6 +207,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                     resources=client.V1ResourceRequirements(
                         requests=vol.spec.capacity
                     ),
+                    storage_class_name=vol.spec.storage_class_name
                 )
             )
         vnames = list(pvd.keys())
