@@ -197,23 +197,30 @@ class NamespacedKubeSpawner(KubeSpawner):
         if not self._nfs_volumes:
             self.log.info("Creating NFS volume list.")
             self._refresh_nfs_volumes()
-        amode = {}
+        pvd = {}
         for vol in self._nfs_volumes:
-            amode[vol.metadata.name] = vol.spec.access_modes
-        vnames = list(amode.keys())
+            name = vol.metadata.name
+            pvd[name] = client.V1PersistentVolumeClaim(
+                spec=client.V1PersistentVolumeClaimSpec(
+                    volume_name=name,
+                    access_modes=vol.spec.access_modes,
+                    resources=client.V1ResourceRequirements(
+                        requests=vol.spec.capacity
+                    ),
+                )
+            )
+        vnames = list(pvd.keys())
         pv = pvc
         if pv not in vnames:
             pv = pvprefix + pv + pvsuffix
             if pv not in vnames:
                 raise RuntimeError("No physical volume '%s' for PVC" % pv)
-        spec = client.V1PersistentVolumeClaimSpec(volume_name=pv,
-                                                  access_modes=amode[pv])
         md = client.V1ObjectMeta(name=pvc)
-        pvc = client.V1PersistentVolumeClaim(spec=spec, metadata=md)
-        self.log.info("Creating PVC '%s' in namespace '%s'" % (pv, namespace))
+        pvd[name].meta = md
+        self.log.info("Creating PVC '%s' in namespace '%s'" % (pvc, namespace))
         try:
             self.api.create_namespaced_persistent_volume_claim(namespace,
-                                                               pvc)
+                                                               pvd[name])
         except ApiException as e:
             if e.status != 409:
                 self.log.exception("Create PVC '%s' " % pvc +
