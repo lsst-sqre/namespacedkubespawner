@@ -36,7 +36,6 @@ class NamespacedKubeSpawner(KubeSpawner):
     """
 
     _nfs_volumes = None
-    _mynamespace = None
     rbacapi = None  # We need an RBAC client
     # Reflectors now have user namespaces built into their names
 
@@ -54,7 +53,6 @@ class NamespacedKubeSpawner(KubeSpawner):
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
-        self._refresh_mynamespace()
         self.namespace = self.get_user_namespace()
 
         if not _mock:
@@ -66,25 +64,14 @@ class NamespacedKubeSpawner(KubeSpawner):
     def get_user_namespace(self):
         """Return namespace for user pods (and ancillary objects)"""
         defname = self._namespace_default()
-        # We concatenate the current namespace and the name so that we
+        # We concatenate the default namespace and the name so that we
         #  can continue having multiple Jupyter instances in the same
         #  k8s cluster in different namespaces.  The user namespaces must
         #  themselves be namespaced, as it were.
-        defname = self._mynamespace
         if self.user and self.user.name:
             uname = self.user.name
             return defname + "-" + uname
         return defname
-
-    def _refresh_mynamespace(self):
-        self._mynamespace = self._get_mynamespace()
-
-    def _get_mynamespace(self):
-        ns_path = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
-        if os.path.exists(ns_path):
-            with open(ns_path) as f:
-                return f.read().strip()
-        return None
 
     def _start_watching_events(self, replace=False):
         """Start the events reflector
@@ -255,7 +242,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         # Then we can bind PVCs to the new (effectively, namespaced) PVs
         #  and everything works.
         self.log.info("Replicating NFS PVs")
-        mns = self._get_mynamespace()
+        mns = self._namespace_default()
         namespace = self.get_user_namespace()
         suffix = ""
         if mns:
@@ -289,7 +276,7 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     def _destroy_namespaced_pvs(self):
         namespace = self.get_user_namespace()
-        if (not namespace or namespace == self._mynamespace or
+        if (not namespace or namespace == self._default_namespace() or
                 namespace == "default"):
             self.log.error("Will not destroy PVs for " +
                            "namespace '%r'" % namespace)
