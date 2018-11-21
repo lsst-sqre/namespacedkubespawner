@@ -216,7 +216,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             if pv not in vnames:
                 raise RuntimeError("No physical volume '%s' for PVC" % pv)
         md = client.V1ObjectMeta(name=pvc)
-        pvd[name].meta = md
+        pvd[name].metadata = md
         self.log.info("Creating PVC '%s' in namespace '%s'" % (pvc, namespace))
         try:
             self.api.create_namespaced_persistent_volume_claim(namespace,
