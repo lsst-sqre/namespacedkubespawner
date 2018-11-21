@@ -273,6 +273,8 @@ class NamespacedKubeSpawner(KubeSpawner):
                     labels={"name": ns_name}
                 )
             )
+            # It is new, therefore unclaimed.
+            pv.spec.claim_ref = None
             try:
                 self.api.create_persistent_volume(pv)
             except ApiException as e:
