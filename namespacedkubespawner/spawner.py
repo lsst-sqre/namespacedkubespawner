@@ -20,6 +20,15 @@ from kubespawner.clients import shared_client
 from kubespawner.spawner import PodReflector, EventReflector
 
 
+def rreplace(s, old, new, occurrence):
+    """Convenience function from:
+    https://stackoverflow.com/questions/2556108/\
+    rreplace-how-to-replace-the-last-occurrence-of-an-expression-in-a-string
+    """
+    li = s.rsplit(old, occurrence)
+    return new.join(li)
+
+
 class NamespacedKubeSpawner(KubeSpawner):
     """
     Implement a JupyterHub spawner to spawn pods in a Kubernetes Cluster with
@@ -27,6 +36,7 @@ class NamespacedKubeSpawner(KubeSpawner):
     """
 
     _nfs_volumes = None
+    _mynamespace = None
     rbacapi = None  # We need an RBAC client
     # Reflectors now have namespaces built into their names
 
@@ -63,11 +73,21 @@ class NamespacedKubeSpawner(KubeSpawner):
         """
         if self.user and self.user.name:
             return self.user.name
+        mns = self._refresh_mynamespace()
+        if mns:
+            self._mynamespace = mns
+            return mns
+        return 'default'
+
+    def _refresh_mynamespace(self):
+        self._mynamespace = self._get_mynamespace()
+
+    def _get_mynamespace(self):
         ns_path = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
         if os.path.exists(ns_path):
             with open(ns_path) as f:
                 return f.read().strip()
-        return 'default'
+        return None
 
     def _start_watching_events(self, replace=False):
         """Start the events reflector
@@ -118,6 +138,8 @@ class NamespacedKubeSpawner(KubeSpawner):
         it does not.  That requires a ClusterRole that can list and create
         namespaces.
 
+        We clone the (static) NFS PVs and then attach namespaced PVCs to them.
+
         If we create the namespace, we also create (if needed) a ServiceAccount
         within it to allow the user pod to spawn dask pods."""
         self.log.info("Entered _ensure_namespace()")
@@ -135,6 +157,8 @@ class NamespacedKubeSpawner(KubeSpawner):
                 raise
             else:
                 self.log.info("Namespace '%s' already exists." % namespace)
+        self._replicate_nfs_pvs()
+        self._create_pvcs_for_pvs()
         if self.service_account:
             self._ensure_namespaced_service_account()
 
@@ -156,11 +180,16 @@ class NamespacedKubeSpawner(KubeSpawner):
         if not clear_to_delete:
             self.log.info("Not deleting namespace '%s'" % namespace)
             return False
+        # These destructors are optional, because the namespace will
+        #  take care of it.
+        self.log.info("Clear to delete namespace '%s'" % namespace)
         self._destroy_pvcs()
         if self.service_account:
             self.log.info("Deleting service " +
                           "account '%s'" % self.service_account)
             self._delete_namespaced_service_account()
+        # But not this next one, because PVs are not really namespaced
+        self._destroy_namespaced_pvs()
         self.log.info("Deleting namespace '%s'" % namespace)
         self.api.delete_namespace(namespace, client.V1DeleteOptions())
         return True
@@ -178,59 +207,133 @@ class NamespacedKubeSpawner(KubeSpawner):
                                                                    namespace,
                                                                    dopts)
 
-    def _refresh_nfs_volumes(self):
+    def _get_nfs_volumes(self, suffix=""):
         # This may be LSST-specific.  We're building a list of all NFS-
         #  mounted PVs, so we can later create namespaced PVCs for each of
         #  them.
+        #
+        # Suffix allows us to only categorize the PVs of a particular form;
+        #  see the comment on _replicate_nfs_pvs() for the rationale.
+        self.log.info("Refreshing NFS volume list")
         pvlist = self.api.list_persistent_volume()
         vols = []
         if pvlist and pvlist.items and len(pvlist.items) > 0:
             for pv in pvlist.items:
                 if (pv and pv.spec and hasattr(pv.spec, "nfs") and
                         pv.spec.nfs):
+                    if suffix:
+                        if not pv.metadata.name.endswith(suffix):
+                            continue
                     vols.append(pv)
-                    self.log.info("Found NFS volume '%s'" % pv.metadata.name)
+                    self.log.debug("Found NFS volume '%s'" % pv.metadata.name)
+        return vols
+
+    def _refresh_nfs_volumes(self, suffix=""):
+        vols = self._get_nfs_volumes(suffix)
         self._nfs_volumes = vols
 
-    def _create_pvc_for_nfs_pv(self, pvc, pvprefix="", pvsuffix=""):
+    def _replicate_nfs_pvs(self):
+        # A Note on Namespaces
+        #
+        # PersistentVolumes binds are exclusive,
+        #  and since PersistentVolumeClaims are namespaced objects,
+        #  mounting claims with “Many” modes (ROX, RWX) is only
+        #  possible within one namespace.
+        #
+        # (https://kubernetes.io/docs/concepts/storage/persistent-volumes)
+        #
+        # The way we do this at LSST is that an NFS PV is statically created
+        #  with the name suffixed with the same namespace as the Hub
+        #  (e.g. "jld-fileserver-projects-jupyterlabdemo")
+        #
+        # Then when a new user namespace is created, we duplicate the NFS
+        #  PV to one with the new namespace appended
+        #  (e.g. "jld-fileserver-projects-athornton")
+        #
+        # Then we can bind PVCs to the new (effectively, namespaced) PVs
+        #  and everything works.
+        self.log.info("Replicating NFS PVs")
+        mns = self._get_mynamespace()
         namespace = self._namespace_default()
-        if not self._nfs_volumes:
-            self.log.info("Creating NFS volume list.")
-            self._refresh_nfs_volumes()
-        pvd = {}
+        suffix = ""
+        if mns:
+            suffix = "-" + mns
+        self._refresh_nfs_volumes(suffix=suffix)
+        ns_suffix = "-" + namespace
         for vol in self._nfs_volumes:
+            pname = vol.metadata.name
+            if suffix:
+                ns_name = rreplace(pname, suffix, ns_suffix, 1)
+            else:
+                ns_name = pname + "-" + namespace
+            pv = client.V1PersistentVolume(
+                spec=vol.spec,
+                metadata=client.V1ObjectMeta(
+                    name=ns_name,
+                    labels={"name": ns_name}
+                )
+            )
+            try:
+                self.api.create_persistent_volume(pv)
+            except ApiException as e:
+                if e.status != 409:
+                    self.log.exception("Create PV '%s' " % ns_name +
+                                       "failed: %s" % str(e))
+                raise
+            else:
+                self.log.info("PV '%s' already exists." % ns_name)
+
+    def _destroy_namespaced_pvs(self):
+        namespace = self._namespace_default()
+        if (not namespace or namespace == self._mynamespace or
+                namespace == "default"):
+            self.log.error("Will not destroy PVs for " +
+                           "namespace '%r'" % namespace)
+            return
+        vols = self._get_nfs_volumes(suffix="-" + namespace)
+        dopts = client.V1DeleteOptions()
+        for v in vols:
+            self.api.delete_persistent_volume(v.metadata.name, dopts)
+
+    def _create_pvcs_for_pvs(self):
+        self.log.info("Creating PVCs for PVs.")
+        namespace = self._namespace_default()
+        suffix = "-" + namespace
+        vols = self._get_nfs_volumes(suffix=suffix)
+        for vol in vols:
             name = vol.metadata.name
-            pvd[name] = client.V1PersistentVolumeClaim(
+            pvcname = rreplace(name, suffix, "", 1)
+            pvd = client.V1PersistentVolumeClaim(
                 spec=client.V1PersistentVolumeClaimSpec(
                     volume_name=name,
                     access_modes=vol.spec.access_modes,
                     resources=client.V1ResourceRequirements(
                         requests=vol.spec.capacity
                     ),
+                    selector=client.V1LabelSelector(
+                        match_labels={"name": name}
+                    ),
                     storage_class_name=vol.spec.storage_class_name
                 )
             )
-        vnames = list(pvd.keys())
-        pv = pvc
-        if pv not in vnames:
-            pv = pvprefix + pv + pvsuffix
-            if pv not in vnames:
-                raise RuntimeError("No physical volume '%s' for PVC" % pv)
-        md = client.V1ObjectMeta(name=pvc)
-        pvd[name].metadata = md
-        self.log.info("Creating PVC '%s' in namespace '%s'" % (pvc, namespace))
-        try:
-            self.api.create_namespaced_persistent_volume_claim(namespace,
-                                                               pvd[name])
-        except ApiException as e:
-            if e.status != 409:
-                self.log.exception("Create PVC '%s' " % pvc +
-                                   "in namespace '%s' " % namespace +
-                                   "failed: %s" % str(e))
-                raise
-            else:
-                self.log.info("PVC '%s' " % pvc +
-                              "in namespace '%s' already exists." % namespace)
+            md = client.V1ObjectMeta(name=pvcname,
+                                     labels={"name": pvcname})
+            pvd.metadata = md
+            self.log.info("Creating PVC '%s' in namespace '%s'" % (pvcname,
+                                                                   namespace))
+            try:
+                self.api.create_namespaced_persistent_volume_claim(namespace,
+                                                                   pvd)
+            except ApiException as e:
+                if e.status != 409:
+                    self.log.exception("Create PVC '%s' " % pvcname +
+                                       "in namespace '%s' " % namespace +
+                                       "failed: %s" % str(e))
+                    raise
+                else:
+                    self.log.info("PVC '%s' " % pvcname +
+                                  "in namespace '%s' " % namespace +
+                                  "already exists.")
 
     def _check_pods(self, items):
         namespace = self._namespace_default()
