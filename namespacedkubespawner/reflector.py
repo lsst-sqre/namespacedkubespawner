@@ -70,11 +70,13 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
         update' cycle on them), we should be ok!
         """
         cur_delay = 0.1
-        self.log.info("watching for %s with label selector %s " % self.kind,
-                      "/ field selector %s " % self.label_selector,
-                      "in namespace %s" % self.field_selector,
-                      ("GLOBAL" if self.list_method_omit_namespace
-                       else self.namespace))
+        ns = self.namespace
+        if self.list_method_omit_namespace:
+            ns = "GLOBAL"
+        self.log.info("watching for %s with " % self.kind,
+                      "label selector %s " % self.label_selector,
+                      "field selector %s " % self.field_selector,
+                      "in namespace %s" % ns)
         while True:
             w = watch.Watch()
             try:
