@@ -10,11 +10,8 @@ import asyncio
 import os
 import sys
 
-from concurrent.futures import ThreadPoolExecutor
-
 from tornado import gen
 from tornado.ioloop import IOLoop
-from urllib.parse import urlparse, urlunparse
 
 from jupyterhub.utils import exponential_backoff
 
@@ -67,7 +64,7 @@ class EventReflector(MultiNamespaceResourceReflector):
         )
 
 
-class MultiNamespacePodReflector(MultiNamespaceResourceReflector):
+class MultiNamespacePodReflector(PodReflector):
     list_method_name = 'list_pod_for_all_namespaces'
     list_method_omit_namespace = True
 

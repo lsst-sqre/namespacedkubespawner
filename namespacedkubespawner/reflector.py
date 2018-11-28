@@ -137,11 +137,3 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
                 if self._stop_event.is_set():
                     self.log.info("%s watcher stopped", self.kind)
                     break
-
-
-class MultiNamespacePodReflector(MultiNamespaceResourceReflector):
-    list_method_name = 'list_pod_for_all_namespaces'
-    list_method_omit_namespace = True
-
-    def _create_resource_key(self, resource):
-        return (resource.metadata.namespace, resource.metadata.name)
