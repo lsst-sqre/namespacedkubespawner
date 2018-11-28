@@ -117,6 +117,12 @@ class NamespacedKubeSpawner(KubeSpawner):
         self.log.debug("Created new pod reflector: " +
                        "%r" % self.__class__.pod_reflector)
 
+        # Restart pod/event watcher
+
+        self._start_watching_pods()
+        if self.events_enabled:
+            self._start_watching_events()
+
     def get_user_namespace(self):
         """Return namespace for user pods (and ancillary objects)"""
         defname = self._namespace_default()
@@ -510,7 +516,7 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     def _destroy_namespaced_pvs(self):
         namespace = self.get_user_namespace()
-        if (not namespace or namespace == self._default_namespace() or
+        if (not namespace or namespace == self.namespace_default() or
                 namespace == "default"):
             self.log.error("Will not destroy PVs for " +
                            "namespace '%r'" % namespace)
