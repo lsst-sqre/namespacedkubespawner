@@ -94,6 +94,8 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
+        # Call Kubespawner's *parent*'s __init__()
+        super().super().__init__(*args, **kwargs)
         if _mock:
             # if testing, skip the rest of initialization
             # FIXME: rework initialization for easier mocking
@@ -125,6 +127,8 @@ class NamespacedKubeSpawner(KubeSpawner):
                 parent=self, namespace=self.namespace,
                 on_failure=on_reflector_failure
             )
+            self.log.debug("Created new reflector: " +
+                           "%r" % self.__class__.pod_reflector)
 
         self.api = shared_client('CoreV1Api')
 
