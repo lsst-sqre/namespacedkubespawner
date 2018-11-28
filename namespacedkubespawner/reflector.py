@@ -73,10 +73,10 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
         ns = self.namespace
         if self.list_method_omit_namespace:
             ns = "GLOBAL"
-        self.log.info("watching for %s with " % self.kind,
-                      "label selector %s " % self.label_selector,
-                      "field selector %s " % self.field_selector,
-                      "in namespace %s" % ns)
+        self.log.info("watching for '%s' with " % self.kind +
+                      "label selector '%s' " % self.label_selector +
+                      "field selector '%s' " % self.field_selector +
+                      "in namespace '%s'" % ns)
         while True:
             w = watch.Watch()
             try:
