@@ -296,7 +296,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                 self._start_watching_pods(replace=True)
             raise
 
-        pod = self.pod_reflector.pods[self.pod_name]
+        pod = self.pod_reflector.pods[(self.namespace, self.pod_name)]
         self.pod_id = pod.metadata.uid
         if self.event_reflector:
             self.log.debug(
