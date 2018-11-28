@@ -567,7 +567,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                     return False
         return True
 
-    def _create_namespaced__account_objects(self):
+    def _create_namespaced_account_objects(self):
         namespace = self.get_user_namespace()
         account = self.service_account
         if not account:
