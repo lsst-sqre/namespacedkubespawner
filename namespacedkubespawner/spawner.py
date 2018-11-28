@@ -93,9 +93,7 @@ class NamespacedKubeSpawner(KubeSpawner):
     )
 
     def __init__(self, *args, **kwargs):
-        # Annoyingly, we gotta copy a lot of this
         _mock = kwargs.pop('_mock', False)
-        super().__init__(*args, **kwargs)
         if _mock:
             # if testing, skip the rest of initialization
             # FIXME: rework initialization for easier mocking
