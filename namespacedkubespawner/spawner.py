@@ -119,9 +119,9 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         # Restart pod/event watcher
 
-        self._start_watching_pods()
+        self._start_watching_pods(replace=True)
         if self.events_enabled:
-            self._start_watching_events()
+            self._start_watching_events(replace=True)
 
     def get_user_namespace(self):
         """Return namespace for user pods (and ancillary objects)"""
