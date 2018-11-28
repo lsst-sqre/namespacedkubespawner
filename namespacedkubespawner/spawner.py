@@ -2,22 +2,30 @@
 JupyterHub Spawner to spawn user notebooks on a Kubernetes cluster in per-
 user namespaces.
 
-This module exports `NamespacedKubeSpawner` class, which is the actual spawner
+This module exports `NamespacedKubeSpawner` class, which is the spawner
 implementation that should be used by JupyterHub.
 """
 
 import asyncio
 import os
+import sys
+
+from concurrent.futures import ThreadPoolExecutor
 
 from tornado import gen
-from traitlets import default
+from tornado.ioloop import IOLoop
+from urllib.parse import urlparse, urlunparse
+
+from jupyterhub.utils import exponential_backoff
+
+from traitlets import Bool
 
 from kubernetes.client.rest import ApiException
 from kubernetes import client
 
 from kubespawner import KubeSpawner
 from kubespawner.clients import shared_client
-from kubespawner.spawner import PodReflector, EventReflector
+from .reflector import MultiNamespaceResourceReflector
 
 
 def rreplace(s, old, new, occurrence):
@@ -29,6 +37,44 @@ def rreplace(s, old, new, occurrence):
     return new.join(li)
 
 
+class PodReflector(MultiNamespaceResourceReflector):
+    kind = 'pods'
+    # FUTURE: These labels are the selection labels for the PodReflector. We
+    # might want to support multiple deployments in the same namespace, so we
+    # would need to select based on additional labels such as `app` and
+    # `release`.
+    labels = {
+        'component': 'singleuser-server',
+    }
+
+    list_method_name = 'list_namespaced_pod'
+
+    @property
+    def pods(self):
+        return self.resources
+
+
+class EventReflector(MultiNamespaceResourceReflector):
+    kind = 'events'
+
+    list_method_name = 'list_namespaced_event'
+
+    @property
+    def events(self):
+        return sorted(
+            self.resources.values(),
+            key=lambda x: x.last_timestamp,
+        )
+
+
+class MultiNamespacePodReflector(MultiNamespaceResourceReflector):
+    list_method_name = 'list_pod_for_all_namespaces'
+    list_method_omit_namespace = True
+
+    def _create_resource_key(self, resource):
+        return (resource.metadata.namespace, resource.metadata.name)
+
+
 class NamespacedKubeSpawner(KubeSpawner):
     """
     Implement a JupyterHub spawner to spawn pods in a Kubernetes Cluster with
@@ -37,29 +83,69 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     _nfs_volumes = None
     rbacapi = None  # We need an RBAC client
-    # Reflectors now have user namespaces built into their names
 
-    @property
-    def pod_reflector(self):
-        """alias to reflectors[namespace + '-pods']"""
-        return self.reflectors[self.get_user_namespace() + '-pods']
-
-    @property
-    def event_reflector(self):
-        """alias to reflectors[namespace + '-events']"""
-        if self.events_enabled:
-            return self.reflectors[self.get_user_namespace() + '-events']
+    delete_namespace_on_stop = Bool(
+        False,
+        help="""
+        If True, the entire namespace and its associated shadow PVs will
+        be deleted when the lab pod stops.
+        """
+    )
 
     def __init__(self, *args, **kwargs):
+        # Annoyingly, we gotta copy a lot of this
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
+        if _mock:
+            # if testing, skip the rest of initialization
+            # FIXME: rework initialization for easier mocking
+            return
+
+        selected_pod_reflector_classref = MultiNamespacePodReflector
         self.namespace = self.get_user_namespace()
 
-        if not _mock:
-            self._ensure_namespace()
-            self._start_watching_pods()  # Need to do it once per user
-            if self.events_enabled:
-                self._start_watching_events()
+        # By now, all the traitlets have been set, so we can use them to
+        #  compute other attributes
+        if self.__class__.executor is None:
+            self.__class__.executor = ThreadPoolExecutor(
+                max_workers=self.k8s_api_threadpool_workers
+            )
+
+        main_loop = IOLoop.current()
+
+        def on_reflector_failure():
+            self.log.critical("Pod reflector failed, halting Hub.")
+            main_loop.stop()
+
+        self._ensure_namespace()
+
+        # This will start watching in __init__, so it'll start the first
+        # time any spawner object is created. Not ideal but works!
+
+        if self.__class__.pod_reflector is None:
+            self.__class__.pod_reflector = selected_pod_reflector_classref(
+                parent=self, namespace=self.namespace,
+                on_failure=on_reflector_failure
+            )
+
+        self.api = shared_client('CoreV1Api')
+
+        self.pod_name = self._expand_user_properties(self.pod_name_template)
+        self.pvc_name = self._expand_user_properties(self.pvc_name_template)
+        if self.hub_connect_ip:
+            scheme, netloc, path, params, query, fragment = urlparse(
+                self.hub.api_url)
+            netloc = '{ip}:{port}'.format(
+                ip=self.hub_connect_ip,
+                port=self.hub_connect_port,
+            )
+            self.accessible_hub_api_url = urlunparse(
+                (scheme, netloc, path, params, query, fragment))
+        else:
+            self.accessible_hub_api_url = self.hub.api_url
+        if self.port == 0:
+            # Our default port is 8888
+            self.port = 8888
 
     def get_user_namespace(self):
         """Return namespace for user pods (and ancillary objects)"""
@@ -73,51 +159,229 @@ class NamespacedKubeSpawner(KubeSpawner):
             return defname + "-" + uname
         return defname
 
-    def _start_watching_events(self, replace=False):
-        """Start the events reflector
+    def _refresh_mynamespace(self):
+        self._mynamespace = self._get_mynamespace()
 
-        If replace=False and the event reflector is already running,
-        do nothing.
+    def _get_mynamespace(self):
+        ns_path = '/var/run/secrets/kubernetes.io/serviceaccount/namespace'
+        if os.path.exists(ns_path):
+            with open(ns_path) as f:
+                return f.read().strip()
+        return None
 
-        If replace=True, a running pod reflector will be stopped
-        and a new one started (for recovering from possible errors).
-
-        Note that the namespace becomes part of the reflector name.
+    @gen.coroutine
+    def poll(self):
         """
-        return self._start_reflector(
-            self.get_user_namespace() + "-events",
-            EventReflector,
-            fields={"involvedObject.kind": "Pod"},
-            replace=replace,
-        )
+        Check if the pod is still running.
 
-    def _start_watching_pods(self, replace=False):
-        """Start the pod reflector
+        Uses the same interface as subprocess.Popen.poll(): if the pod is
+        still running, returns None.  If the pod has exited, return the
+        exit code if we can determine it, or 1 if it has exited but we
+        don't know how.  These are the return values JupyterHub expects.
 
-        If replace=False and the pod reflector is already running,
-        do nothing.
-
-        If replace=True, a running pod reflector will be stopped
-        and a new one started (for recovering from possible errors).
-
-        Note that the namespace becomes part of the reflector name.
+        Note that a clean exit will have an exit code of zero, so it is
+        necessary to check that the returned value is None, rather than
+        just Falsy, to determine that the pod is still running.
         """
-        return self._start_reflector(self.get_user_namespace() + "-pods",
-                                     PodReflector, replace=replace)
+        # have to wait for first load of data before we have a valid answer
+        if not self.pod_reflector.first_load_future.done():
+            yield self.pod_reflector.first_load_future
+        data = self.pod_reflector.pods.get((self.namespace, self.pod_name),
+                                           None)
+        if data is not None:
+            if data.status.phase == 'Pending':
+                return None
+            ctr_stat = data.status.container_statuses
+            if ctr_stat is None:  # No status, no container (we hope)
+                # This seems to happen when a pod is idle-culled.
+                return 1
+            for c in ctr_stat:
+                # return exit code if notebook container has terminated
+                if c.name == 'notebook':
+                    if c.state.terminated:
+                        # call self.stop to delete the pod
+                        if self.delete_stopped_pods:
+                            yield self.stop(now=True)
+                        return c.state.terminated.exit_code
+                    break
+            # None means pod is running or starting up
+            return None
+        # pod doesn't exist or has been deleted
+        return 1
 
-    def start(self):
+    @gen.coroutine
+    def _start(self):
         """Start the user's pod"""
-        return super().start()
+        # record latest event so we don't include old
+        # events from previous pods in self.events
+        # track by order and name instead of uid
+        # so we get events like deletion of a previously stale
+        # pod if it's part of this spawn process
+        events = self.events
+        if events:
+            self._last_event = events[-1].metadata.uid
+
+        if self.storage_pvc_ensure:
+            # Try and create the pvc. If it succeeds we are good. If
+            # returns a 409 indicating it already exists we are good. If
+            # it returns a 403, indicating potential quota issue we need
+            # to see if pvc already exists before we decide to raise the
+            # error for quota being exceeded. This is because quota is
+            # checked before determining if the PVC needed to be
+            # created.
+
+            pvc = self.get_pvc_manifest()
+
+            try:
+                yield self.asynchronize(
+                    self.api.create_namespaced_persistent_volume_claim,
+                    namespace=self.namespace,
+                    body=pvc
+                )
+            except ApiException as e:
+                if e.status == 409:
+                    self.log.info("PVC " + self.pvc_name +
+                                  " already exists, so did not create" +
+                                  " new pvc.")
+
+                elif e.status == 403:
+                    t, v, tb = sys.exc_info()
+
+                    try:
+                        yield self.asynchronize(
+                            self.api.read_namespaced_persistent_volume_claim,
+                            name=self.pvc_name,
+                            namespace=self.namespace)
+                    except ApiException:
+                        raise v.with_traceback(tb)
+
+                    self.log.info(
+                        "PVC " + self.pvc_name + " already exists," +
+                        " possibly have reached quota though.")
+
+                else:
+                    raise
+        # If we run into a 409 Conflict error, it means a pod with the
+        # same name already exists. We stop it, wait for it to stop, and
+        # try again. We try 4 times, and if it still fails we give up.
+        # FIXME: Have better / cleaner retry logic!
+        retry_times = 4
+        pod = yield self.get_pod_manifest()
+        if self.modify_pod_hook:
+            pod = yield gen.maybe_future(self.modify_pod_hook(self, pod))
+        for i in range(retry_times):
+            try:
+                yield self.asynchronize(
+                    self.api.create_namespaced_pod,
+                    self.namespace,
+                    pod,
+                )
+                break
+            except ApiException as e:
+                if e.status != 409:
+                    # We only want to handle 409 conflict errors
+                    self.log.exception("Failed for %s", pod.to_str())
+                    raise
+                self.log.info(
+                    'Found existing pod %s, attempting to kill', self.pod_name)
+                # TODO: this should show up in events
+                yield self.stop(True)
+
+                self.log.info(
+                    'Killed pod %s, will try starting ' % self.pod_name +
+                    'singleuser pod again')
+        else:
+            raise Exception(
+                'Can not create user pod %s :' % self.pod_name +
+                'already exists and could not be deleted')
+
+        # we need a timeout here even though start itself has a timeout
+        # in order for this coroutine to finish at some point.
+        # using the same start_timeout here
+        # essentially ensures that this timeout should never propagate up
+        # because the handler will have stopped waiting after
+        # start_timeout, starting from a slightly earlier point.
+        try:
+            yield exponential_backoff(
+                lambda: self.is_pod_running(self.pod_reflector.pods.get(
+                    (self.namespace, self.pod_name), None)),
+                'pod/%s did not start in %s seconds!' % (
+                    self.pod_name, self.start_timeout),
+                timeout=self.start_timeout,
+            )
+        except TimeoutError:
+            if self.pod_name not in self.pod_reflector.pods:
+                # if pod never showed up at all,
+                # restart the pod reflector which may have become disconnected.
+                self.log.error(
+                    "Pod %s never showed up in reflector;" % self.pod_name +
+                    " restarting pod reflector."
+                )
+                self._start_watching_pods(replace=True)
+            raise
+
+        pod = self.pod_reflector.pods[self.pod_name]
+        self.pod_id = pod.metadata.uid
+        if self.event_reflector:
+            self.log.debug(
+                'pod %s events before launch: %s',
+                self.pod_name,
+                "\n".join(
+                    [
+                        "%s [%s] %s" % (event.last_timestamp,
+                                        event.type, event.message)
+                        for event in self.events
+                    ]
+                ),
+            )
+        return (pod.status.pod_ip, self.port)
 
     @gen.coroutine
     def stop(self, now=False):
-        """Stop the user's pod, and try to delete ancillary objects and
-        finally the namespace"""
-        rc = super().stop()
-        delled = self._maybe_delete_namespace()
-        if not delled:
-            self.asynchronize(self._async_delete_namespace())
-        return rc
+        delete_options = client.V1DeleteOptions()
+
+        if now:
+            grace_seconds = 0
+        else:
+            # Give it some time, but not the default (which is 30s!)
+            # FIXME: Move this into pod creation maybe?
+            grace_seconds = 1
+
+        delete_options.grace_period_seconds = grace_seconds
+        self.log.info("Deleting pod %s", self.pod_name)
+        try:
+            yield self.asynchronize(
+                self.api.delete_namespaced_pod,
+                name=self.pod_name,
+                namespace=self.namespace,
+                body=delete_options,
+                grace_period_seconds=grace_seconds,
+            )
+        except ApiException as e:
+            if e.status == 404:
+                self.log.warning(
+                    "No pod %s to delete. Assuming already deleted.",
+                    self.pod_name,
+                )
+            else:
+                raise
+        try:
+            yield exponential_backoff(
+                lambda: self.pod_reflector.pods.get((self.namespace,
+                                                     self.pod_name), None) is
+                None,
+                'pod/%s did not disappear in %s seconds!' % (
+                    self.pod_name, self.start_timeout),
+                timeout=self.start_timeout,
+            )
+        except TimeoutError:
+            self.log.error(
+                "Pod %s did not disappear, " % self.pod_name +
+                "restarting pod reflector")
+            self._start_watching_pods(replace=True)
+            raise
+        if self.delete_namespace_on_stop:
+            await self.asynchronize(self._maybe_delete_namespace())
 
     def _ensure_namespace(self):
         """Here we make sure that the namespace exists, creating it if
