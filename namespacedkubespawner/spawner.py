@@ -104,7 +104,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         `self.get_resource_quota_spec()` and create a quota with the resulting
         specification within the namespace.
 
-        A subclass should override get_resource_quota to create a
+        A subclass should override get_resource_quota_spec() to create a
         situationally-appropriate resource quota spec.
         """
     )
