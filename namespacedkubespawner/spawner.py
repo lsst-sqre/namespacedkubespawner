@@ -532,6 +532,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                 self.api.create_persistent_volume(pv)
             except ApiException as e:
                 self.log.debug("Exception: %s" % str(e))
+                self.log.debug("Exception: %r" % e)
                 if e.status != 409:
                     self.log.exception("Create PV '%s' " % ns_name +
                                        "failed: %s" % str(e))
