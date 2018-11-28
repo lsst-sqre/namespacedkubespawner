@@ -94,8 +94,7 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
-        # Call Kubespawner's *parent*'s __init__()
-        super().super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         if _mock:
             # if testing, skip the rest of initialization
             # FIXME: rework initialization for easier mocking
@@ -103,13 +102,6 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         selected_pod_reflector_classref = MultiNamespacePodReflector
         self.namespace = self.get_user_namespace()
-
-        # By now, all the traitlets have been set, so we can use them to
-        #  compute other attributes
-        if self.__class__.executor is None:
-            self.__class__.executor = ThreadPoolExecutor(
-                max_workers=self.k8s_api_threadpool_workers
-            )
 
         main_loop = IOLoop.current()
 
@@ -119,35 +111,14 @@ class NamespacedKubeSpawner(KubeSpawner):
 
         self._ensure_namespace()
 
-        # This will start watching in __init__, so it'll start the first
-        # time any spawner object is created. Not ideal but works!
+        # Replace pod_reflector
 
-        if self.__class__.pod_reflector is None:
-            self.__class__.pod_reflector = selected_pod_reflector_classref(
-                parent=self, namespace=self.namespace,
-                on_failure=on_reflector_failure
-            )
-            self.log.debug("Created new reflector: " +
-                           "%r" % self.__class__.pod_reflector)
-
-        self.api = shared_client('CoreV1Api')
-
-        self.pod_name = self._expand_user_properties(self.pod_name_template)
-        self.pvc_name = self._expand_user_properties(self.pvc_name_template)
-        if self.hub_connect_ip:
-            scheme, netloc, path, params, query, fragment = urlparse(
-                self.hub.api_url)
-            netloc = '{ip}:{port}'.format(
-                ip=self.hub_connect_ip,
-                port=self.hub_connect_port,
-            )
-            self.accessible_hub_api_url = urlunparse(
-                (scheme, netloc, path, params, query, fragment))
-        else:
-            self.accessible_hub_api_url = self.hub.api_url
-        if self.port == 0:
-            # Our default port is 8888
-            self.port = 8888
+        self.__class__.pod_reflector = selected_pod_reflector_classref(
+            parent=self, namespace=self.namespace,
+            on_failure=on_reflector_failure
+        )
+        self.log.debug("Created new pod reflector: " +
+                       "%r" % self.__class__.pod_reflector)
 
     def get_user_namespace(self):
         """Return namespace for user pods (and ancillary objects)"""
