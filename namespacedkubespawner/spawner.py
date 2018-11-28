@@ -652,7 +652,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         namespace = self.get_user_namespace()
         account = self.service_account
         dopts = client.V1DeleteOptions()
-        self.log_info("Deleting service accounts/role/rolebinding " +
+        self.log.info("Deleting service accounts/role/rolebinding " +
                       "for %s" % namespace)
         self.rbacapi.delete_namespaced_role_binding(
             account,
