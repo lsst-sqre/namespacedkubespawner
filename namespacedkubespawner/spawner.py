@@ -381,7 +381,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             self._start_watching_pods(replace=True)
             raise
         if self.delete_namespace_on_stop:
-            await self.asynchronize(self._maybe_delete_namespace())
+            yield self.asynchronize(self._maybe_delete_namespace())
 
     def _ensure_namespace(self):
         """Here we make sure that the namespace exists, creating it if
