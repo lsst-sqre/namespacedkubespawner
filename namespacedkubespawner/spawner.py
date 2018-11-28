@@ -97,6 +97,18 @@ class NamespacedKubeSpawner(KubeSpawner):
         """
     )
 
+    enable_namespace_quotas = Bool(
+        False,
+        help="""
+        If True, will create a ResourceQuota object by calling
+        `self.get_resource_quota_spec()` and create a quota with the resulting
+        specification within the namespace.
+
+        A subclass should override get_resource_quota to create a
+        situationally-appropriate resource quota spec.
+        """
+    )
+
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
@@ -130,6 +142,12 @@ class NamespacedKubeSpawner(KubeSpawner):
         self._start_watching_pods(replace=True)
         if self.events_enabled:
             self._start_watching_events(replace=True)
+
+    def get_resource_quota_spec(self):
+        """An implementation should override this by returning an appropriate
+        kubernetes.client.V1ResourceQuotaSpec.
+        """
+        return None
 
     def get_user_namespace(self):
         """Return namespace for user pods (and ancillary objects)"""
@@ -397,6 +415,10 @@ class NamespacedKubeSpawner(KubeSpawner):
             self._create_pvcs_for_pvs()
         if self.service_account:
             self._ensure_namespaced_service_account()
+        if self.enable_namespace_quotas:
+            quota = self.get_resource_quota()
+            if quota:
+                self._ensure_namespaced_resource_quota(quota)
 
     async def _async_delete_namespace(self, delay=75):
         namespace = self.get_user_namespace()
@@ -648,6 +670,37 @@ class NamespacedKubeSpawner(KubeSpawner):
             else:
                 self.log.info("Rolebinding '%s' " % account +
                               "already exists in '%s'." % namespace)
+
+    def ensure_namespaced_resource_quota(self, quotaspec):
+        namespace = self.get_user_namespace()
+        qname = "quota-" + namespace
+        quota = client.V1ResourceQuota(
+            metadata=client.V1ObjectMeta(
+                name=qname
+            ),
+            spec=quotaspec
+        )
+        self.log.info("Creating resource quota %s" % qname)
+        try:
+            self.api.create_namespaced_resource_quota(namespace, quota)
+        except ApiException as e:
+            if e.status != 409:
+                self.log.exception("Create resourcequota '%s'" % quota +
+                                   "in namespace '%s' " % namespace +
+                                   "failed: %s", str(e))
+                raise
+            else:
+                self.log.info("Resourcequota '%s' " % quota +
+                              "already exists in '%s'." % namespace)
+
+    def _destroy_namespaced_resource_quota(self):
+        # You don't usually have to call this, since it will get
+        #  cleaned up as part of namespace deletion.
+        namespace = self.get_user_namespace()
+        qname = "quota-" + namespace
+        dopts = client.V1DeleteOptions()
+        self.log.info("Deleting resourcequota '%s'" % qname)
+        self.api.delete_namespaced_resource_quota(qname, namespace, dopts)
 
     def _destroy_pvcs(self):
         # You don't usually have to call this, since it will get
