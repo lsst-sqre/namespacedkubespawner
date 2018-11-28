@@ -2,7 +2,7 @@
 #  https://github.com/jupyterhub/kubespawner/pull/218
 import time
 from kubernetes import watch
-from kubespawner import NamespacedResourceReflector
+from kubespawner.reflector import NamespacedResourceReflector
 from traitlets import Bool
 # This is kubernetes client implementation specific, but we need to know
 # whether it was a network or watch timeout.
