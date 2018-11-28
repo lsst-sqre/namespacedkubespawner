@@ -516,7 +516,7 @@ class NamespacedKubeSpawner(KubeSpawner):
 
     def _destroy_namespaced_pvs(self):
         namespace = self.get_user_namespace()
-        if (not namespace or namespace == self.namespace_default() or
+        if (not namespace or namespace == self._namespace_default() or
                 namespace == "default"):
             self.log.error("Will not destroy PVs for " +
                            "namespace '%r'" % namespace)
