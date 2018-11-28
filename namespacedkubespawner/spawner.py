@@ -89,6 +89,14 @@ class NamespacedKubeSpawner(KubeSpawner):
         """
     )
 
+    duplicate_nfs_pvs_to_namespace = Bool(
+        False,
+        help="""
+        If true, NFS PVs in the JupyterHub namespace will be replicated
+        to the user namespace.
+        """
+    )
+
     def __init__(self, *args, **kwargs):
         _mock = kwargs.pop('_mock', False)
         super().__init__(*args, **kwargs)
@@ -384,8 +392,9 @@ class NamespacedKubeSpawner(KubeSpawner):
                 raise
             else:
                 self.log.info("Namespace '%s' already exists." % namespace)
-        self._replicate_nfs_pvs()
-        self._create_pvcs_for_pvs()
+        if self.duplicate_nfs_pvs_to_namespace:
+            self._replicate_nfs_pvs()
+            self._create_pvcs_for_pvs()
         if self.service_account:
             self._ensure_namespaced_service_account()
 
@@ -409,32 +418,12 @@ class NamespacedKubeSpawner(KubeSpawner):
         if not clear_to_delete:
             self.log.info("Not deleting namespace '%s'" % namespace)
             return False
-        # These destructors are optional, because the namespace will
-        #  take care of it.
         self.log.info("Clear to delete namespace '%s'" % namespace)
-        self._destroy_pvcs()
-        if self.service_account:
-            self.log.info("Deleting service " +
-                          "account '%s'" % self.service_account)
-            self._delete_namespaced_service_account()
-        # But not this next one, because PVs are not really namespaced
+        # PVs are not really namespaced
         self._destroy_namespaced_pvs()
         self.log.info("Deleting namespace '%s'" % namespace)
         self.api.delete_namespace(namespace, client.V1DeleteOptions())
         return True
-
-    def _destroy_pvcs(self):
-        namespace = self.get_user_namespace()
-        pvclist = self.api.list_namespaced_persistent_volume_claim(namespace)
-        if pvclist and pvclist.items and len(pvclist.items) > 0:
-            dopts = client.V1DeleteOptions()
-            for pvc in pvclist.items:
-                name = pvc.metadata.name
-                self.log.info("Deleting PVC '%s' " % name +
-                              "from namespace '%s'" % namespace)
-                self.api.delete_namespaced_persistent_volume_claim(name,
-                                                                   namespace,
-                                                                   dopts)
 
     def _get_nfs_volumes(self, suffix=""):
         # This may be LSST-specific.  We're building a list of all NFS-
@@ -578,9 +567,12 @@ class NamespacedKubeSpawner(KubeSpawner):
                     return False
         return True
 
-    def _make_account_objects(self):
+    def _create_namespaced__account_objects(self):
         namespace = self.get_user_namespace()
         account = self.service_account
+        if not account:
+            self.log.info("No service account defined.")
+            return (None, None, None)
         md = client.V1ObjectMeta(name=account)
         svcacct = client.V1ServiceAccount(metadata=md)
         rules = [
@@ -610,7 +602,10 @@ class NamespacedKubeSpawner(KubeSpawner):
         to manipulate pods in the namespace."""
         namespace = self.get_user_namespace()
         account = self.service_account
-        svcacct, role, rolebinding = self._make_account_objects()
+        svcacct, role, rolebinding = self._create_namespaced_account_objects()
+        if not svcacct:
+            self.log.info("Service account not defined.")
+            return
         try:
             self.api.create_namespaced_service_account(
                 namespace=namespace,
@@ -654,9 +649,29 @@ class NamespacedKubeSpawner(KubeSpawner):
                 self.log.info("Rolebinding '%s' " % account +
                               "already exists in '%s'." % namespace)
 
-    def _delete_namespaced_service_account(self):
+    def _destroy_pvcs(self):
+        # You don't usually have to call this, since it will get
+        #  cleaned up as part of namespace deletion.
+        namespace = self.get_user_namespace()
+        pvclist = self.api.list_namespaced_persistent_volume_claim(namespace)
+        if pvclist and pvclist.items and len(pvclist.items) > 0:
+            dopts = client.V1DeleteOptions()
+            for pvc in pvclist.items:
+                name = pvc.metadata.name
+                self.log.info("Deleting PVC '%s' " % name +
+                              "from namespace '%s'" % namespace)
+                self.api.delete_namespaced_persistent_volume_claim(name,
+                                                                   namespace,
+                                                                   dopts)
+
+    def _delete_namespaced_service_account_objects(self):
+        # You don't usually have to call this, since it will get
+        #  cleaned up as part of namespace deletion.
         namespace = self.get_user_namespace()
         account = self.service_account
+        if not account:
+            self.log.info("Service account not defined.")
+            return
         dopts = client.V1DeleteOptions()
         self.log.info("Deleting service accounts/role/rolebinding " +
                       "for %s" % namespace)
