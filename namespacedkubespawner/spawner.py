@@ -381,7 +381,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             self._start_watching_pods(replace=True)
             raise
         if self.delete_namespace_on_stop:
-            yield self.asynchronize(self._maybe_delete_namespace())
+            self.asynchronize(self._maybe_delete_namespace())
 
     def _ensure_namespace(self):
         """Here we make sure that the namespace exists, creating it if
@@ -531,6 +531,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             try:
                 self.api.create_persistent_volume(pv)
             except ApiException as e:
+                self.log.debug("Exception: %s" % str(e))
                 if e.status != 409:
                     self.log.exception("Create PV '%s' " % ns_name +
                                        "failed: %s" % str(e))
