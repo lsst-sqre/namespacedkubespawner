@@ -506,11 +506,11 @@ class NamespacedKubeSpawner(KubeSpawner):
                 ns_name = rreplace(pname, suffix, ns_suffix, 1)
             else:
                 ns_name = pname + "-" + namespace
-            lock = {"volume.beta.kubernetes.io/mount-options": "local_lock=all"}
+            #lock={"volume.beta.kubernetes.io/mount-options": "local_lock=all"}
             pv = client.V1PersistentVolume(
                 spec=vol.spec,
                 metadata=client.V1ObjectMeta(
-                    annotations=lock,
+                    #annotations=lock,
                     name=ns_name,
                     labels={"name": ns_name}
                 )
