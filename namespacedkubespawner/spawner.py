@@ -500,17 +500,21 @@ class NamespacedKubeSpawner(KubeSpawner):
             suffix = "-" + mns
         self._refresh_nfs_volumes(suffix=suffix)
         ns_suffix = "-" + namespace
+        mtkey="volume.beta.kubernetes.io/mount-options"
         for vol in self._nfs_volumes:
             pname = vol.metadata.name
+            mtopts = vol.metadata.annotations.get(mtkey)
             if suffix:
                 ns_name = rreplace(pname, suffix, ns_suffix, 1)
             else:
                 ns_name = pname + "-" + namespace
-            lock = {"volume.beta.kubernetes.io/mount-options": "local_lock=all"}
+            anno={}
+            if mtopts:
+                anno[mtkey] = mtopts
             pv = client.V1PersistentVolume(
                 spec=vol.spec,
                 metadata=client.V1ObjectMeta(
-                    annotations=lock,
+                    annotations=anno,
                     name=ns_name,
                     labels={"name": ns_name}
                 )
