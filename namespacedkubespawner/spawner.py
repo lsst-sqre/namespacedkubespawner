@@ -147,6 +147,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         """An implementation should override this by returning an appropriate
         kubernetes.client.V1ResourceQuotaSpec.
         """
+        self.log.info("Dummy get_resource_quota_spec(); override for quotas")
         return None
 
     def get_user_namespace(self):
@@ -418,8 +419,8 @@ class NamespacedKubeSpawner(KubeSpawner):
         if self.enable_namespace_quotas:
             self.log.info("About to get quota spec.")
             quota = self.get_resource_quota_spec()
+            self.log.info("Got quota spec: %r" % quota)
             if quota:
-                self.log.info("Got quota spec: %r" % quota)
                 self._ensure_namespaced_resource_quota(quota)
 
     async def _async_delete_namespace(self, delay=75):
