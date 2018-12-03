@@ -416,8 +416,10 @@ class NamespacedKubeSpawner(KubeSpawner):
         if self.service_account:
             self._ensure_namespaced_service_account()
         if self.enable_namespace_quotas:
+            self.log.info("About to get quota spec.")
             quota = self.get_resource_quota_spec()
             if quota:
+                self.log.info("Got quota spec: %r" % quota)
                 self._ensure_namespaced_resource_quota(quota)
 
     async def _async_delete_namespace(self, delay=75):
@@ -678,6 +680,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                               "already exists in '%s'." % namespace)
 
     def ensure_namespaced_resource_quota(self, quotaspec):
+        self.log.info("Entering ensure_namespaced_resource_quota()")
         namespace = self.get_user_namespace()
         qname = "quota-" + namespace
         quota = client.V1ResourceQuota(
@@ -687,6 +690,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             spec=quotaspec
         )
         self.log.info("Creating resource quota %s" % qname)
+        self.log.info("Quota: %r" % quota)
         try:
             self.api.create_namespaced_resource_quota(namespace, quota)
         except ApiException as e:
@@ -696,7 +700,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                                    "failed: %s", str(e))
                 raise
             else:
-                self.log.info("Resourcequota '%s' " % quota +
+                self.log.info("Resourcequota '%r' " % quota +
                               "already exists in '%s'." % namespace)
 
     def _destroy_namespaced_resource_quota(self):
