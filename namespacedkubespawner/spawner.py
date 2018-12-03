@@ -416,7 +416,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         if self.service_account:
             self._ensure_namespaced_service_account()
         if self.enable_namespace_quotas:
-            quota = self.get_resource_quota()
+            quota = self.get_resource_quota_spec()
             if quota:
                 self._ensure_namespaced_resource_quota(quota)
 
@@ -500,7 +500,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             suffix = "-" + mns
         self._refresh_nfs_volumes(suffix=suffix)
         ns_suffix = "-" + namespace
-        mtkey="volume.beta.kubernetes.io/mount-options"
+        mtkey = "volume.beta.kubernetes.io/mount-options"
         for vol in self._nfs_volumes:
             pname = vol.metadata.name
             mtopts = vol.metadata.annotations.get(mtkey)
@@ -508,7 +508,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                 ns_name = rreplace(pname, suffix, ns_suffix, 1)
             else:
                 ns_name = pname + "-" + namespace
-            anno={}
+            anno = {}
             if mtopts:
                 anno[mtkey] = mtopts
             pv = client.V1PersistentVolume(
