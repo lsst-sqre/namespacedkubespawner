@@ -147,6 +147,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         """An implementation should override this by returning an appropriate
         kubernetes.client.V1ResourceQuotaSpec.
         """
+        self.log.info("Dummy get_resource_quota_spec(); override for quotas")
         return None
 
     def get_user_namespace(self):
@@ -416,7 +417,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         if self.service_account:
             self._ensure_namespaced_service_account()
         if self.enable_namespace_quotas:
-            quota = self.get_resource_quota()
+            quota = self.get_resource_quota_spec()
             if quota:
                 self._ensure_namespaced_resource_quota(quota)
 
@@ -500,7 +501,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             suffix = "-" + mns
         self._refresh_nfs_volumes(suffix=suffix)
         ns_suffix = "-" + namespace
-        mtkey="volume.beta.kubernetes.io/mount-options"
+        mtkey = "volume.beta.kubernetes.io/mount-options"
         for vol in self._nfs_volumes:
             pname = vol.metadata.name
             mtopts = vol.metadata.annotations.get(mtkey)
@@ -508,7 +509,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                 ns_name = rreplace(pname, suffix, ns_suffix, 1)
             else:
                 ns_name = pname + "-" + namespace
-            anno={}
+            anno = {}
             if mtopts:
                 anno[mtkey] = mtopts
             pv = client.V1PersistentVolume(
@@ -677,7 +678,8 @@ class NamespacedKubeSpawner(KubeSpawner):
                 self.log.info("Rolebinding '%s' " % account +
                               "already exists in '%s'." % namespace)
 
-    def ensure_namespaced_resource_quota(self, quotaspec):
+    def _ensure_namespaced_resource_quota(self, quotaspec):
+        self.log.info("Entering ensure_namespaced_resource_quota()")
         namespace = self.get_user_namespace()
         qname = "quota-" + namespace
         quota = client.V1ResourceQuota(
@@ -686,7 +688,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             ),
             spec=quotaspec
         )
-        self.log.info("Creating resource quota %s" % qname)
+        self.log.info("Creating quota: %r" % quota)
         try:
             self.api.create_namespaced_resource_quota(namespace, quota)
         except ApiException as e:
@@ -696,7 +698,7 @@ class NamespacedKubeSpawner(KubeSpawner):
                                    "failed: %s", str(e))
                 raise
             else:
-                self.log.info("Resourcequota '%s' " % quota +
+                self.log.info("Resourcequota '%r' " % quota +
                               "already exists in '%s'." % namespace)
 
     def _destroy_namespaced_resource_quota(self):
