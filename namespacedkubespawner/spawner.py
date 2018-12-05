@@ -126,8 +126,6 @@ class NamespacedKubeSpawner(KubeSpawner):
             self.log.critical("Pod reflector failed, halting Hub.")
             main_loop.stop()
 
-        self._ensure_namespace()
-
         # Replace pod_reflector
 
         self.__class__.pod_reflector = selected_pod_reflector_classref(
@@ -215,6 +213,8 @@ class NamespacedKubeSpawner(KubeSpawner):
     @gen.coroutine
     def _start(self):
         """Start the user's pod"""
+        # Ensure namespace and necessary resources exist
+        self._ensure_namespace()
         # record latest event so we don't include old
         # events from previous pods in self.events
         # track by order and name instead of uid
