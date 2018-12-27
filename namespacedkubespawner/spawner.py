@@ -504,7 +504,9 @@ class NamespacedKubeSpawner(KubeSpawner):
         mtkey = "volume.beta.kubernetes.io/mount-options"
         for vol in self._nfs_volumes:
             pname = vol.metadata.name
-            mtopts = vol.metadata.annotations.get(mtkey)
+            mtopts = None
+            if vol.metadata.annotations:
+                mtopts = vol.metadata.annotations.get(mtkey)
             if suffix:
                 ns_name = rreplace(pname, suffix, ns_suffix, 1)
             else:
