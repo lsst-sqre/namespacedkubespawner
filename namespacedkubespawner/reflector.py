@@ -53,7 +53,9 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
     def _watch_and_update(self):
         """
         Keeps the current list of resources up-to-date
+
         This method is to be run not on the main thread!
+
         We first fetch the list of current resources, and store that. Then we
         register to be notified of changes to those resources, and keep our
         local store up-to-date based on these notifications.
@@ -63,21 +65,33 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
         recover from an exception we also do a full fetch, to pick up
         changes that might've been missed in the time we were not doing
         a watch.
+
         Note that we're playing a bit with fire here, by updating a dictionary
         in this thread while it is probably being read in another thread
         without using locks! However, dictionary access itself is atomic,
         and as long as we don't try to mutate them (do a 'fetch / modify /
         update' cycle on them), we should be ok!
         """
+        selectors = []
+        log_name = ""
+        if self.label_selector:
+            selectors.append("label selector=%r" % self.label_selector)
+        if self.field_selector:
+            selectors.append("field selector=%r" % self.field_selector)
+        log_selector = ', '.join(selectors)
+
         cur_delay = 0.1
         ns = self.namespace
         if self.list_method_omit_namespace:
-            ns = "GLOBAL"
-        self.log.info("watching for '%s' with " % self.kind +
-                      "label selector '%s' " % self.label_selector +
-                      "field selector '%s' " % self.field_selector +
-                      "in namespace '%s'" % ns)
+            ns = "[GLOBAL]"
+
+        self.log.info(
+            "watching for %s with %s in namespace %s",
+            self.kind, log_selector, ns,
+        )
         while True:
+            self.log.debug("Connecting %s watcher", self.kind)
+            start = time.monotonic()
             w = watch.Watch()
             try:
                 resource_version = self._list_and_update()
@@ -115,9 +129,21 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
                         self.resources[self._create_resource_key(
                             resource)] = resource
                     if self._stop_event.is_set():
+                        self.log.info("%s watcher stopped", self.kind)
+                        break
+                        break
+                    watch_duration = time.monotonic() - start
+                    if watch_duration >= self.restart_seconds:
+                        self.log.debug(
+                            "Restarting %s watcher after %i seconds",
+                            self.kind, watch_duration,
+                        )
                         break
             except ReadTimeoutError:
                 # network read time out, just continue and restart the watch
+                # this could be due to a network problem or just low activity
+                self.log.warning(
+                    "Read timeout watching %s, reconnecting", self.kind)
                 continue
             except Exception:
                 cur_delay = cur_delay * 2
@@ -132,8 +158,12 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
                     " %ss" % cur_delay)
                 time.sleep(cur_delay)
                 continue
+            else:
+                # no events on watch, reconnect
+                self.log.debug("%s watcher timeout", self.kind)
             finally:
                 w.stop()
                 if self._stop_event.is_set():
                     self.log.info("%s watcher stopped", self.kind)
                     break
+        self.log.warning("%s watcher finished", self.kind)

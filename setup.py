@@ -3,9 +3,9 @@ from setuptools import setup, find_packages
 
 setup(
     name='namespacedkubespawner',
-    version='0.0.8',
+    version='0.0.9',
     install_requires=[
-        'jupyterhub-kubespawner>=0.10',
+        'jupyterhub-kubespawner>=0.10.1',
     ],
     python_requires='>=3.5',
     description='Namespaced Spawner for Kubernetes',
