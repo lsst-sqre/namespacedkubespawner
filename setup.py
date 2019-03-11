@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='namespacedkubespawner',
-    version='0.0.11',
+    version='0.0.12',
     install_requires=[
         'jupyterhub-kubespawner>=0.10.1',
     ],
