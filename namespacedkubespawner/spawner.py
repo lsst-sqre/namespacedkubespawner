@@ -442,10 +442,10 @@ class NamespacedKubeSpawner(KubeSpawner):
             self.log.info("Not deleting namespace '%s'" % namespace)
             return False
         self.log.info("Clear to delete namespace '%s'" % namespace)
-        # PVs are not really namespaced
-        self._destroy_namespaced_pvs()
         self.log.info("Deleting namespace '%s'" % namespace)
         self.api.delete_namespace(namespace, client.V1DeleteOptions())
+        # PVs are not really namespaced
+        self._destroy_namespaced_pvs()
         return True
 
     def _get_nfs_volumes(self, suffix=""):
