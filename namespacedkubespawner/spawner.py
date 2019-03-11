@@ -384,7 +384,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             self._start_watching_pods(replace=True)
             raise
         if self.delete_namespace_on_stop:
-            self.asynchronize(self._maybe_delete_namespace())
+            self.asynchronize(self._maybe_delete_namespace)
 
     def _ensure_namespace(self):
         """Here we make sure that the namespace exists, creating it if
@@ -426,7 +426,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         self.log.info("Waiting %d seconds " % delay +
                       "for pods in namespace '%s' to exit." % namespace)
         await asyncio.sleep(delay)
-        await self.asynchronize(self._maybe_delete_namespace())
+        await self.asynchronize(self._maybe_delete_namespace)
 
     def _maybe_delete_namespace(self):
         """Here we try to delete the namespace.  If it has no running pods,
