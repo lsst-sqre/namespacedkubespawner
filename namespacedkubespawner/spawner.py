@@ -396,7 +396,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         if self.delete_namespace_on_stop:
             self.asynchronize(self._maybe_delete_namespace)
             if self.delete_namespaced_pvs_on_stop:
-                self.asyncronize(self._destroy_namespaced_pvs)
+                self.asynchronize(self._destroy_namespaced_pvs)
 
     def _ensure_namespace(self):
         """Here we make sure that the namespace exists, creating it if
