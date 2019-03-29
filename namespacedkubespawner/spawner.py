@@ -455,7 +455,7 @@ class NamespacedKubeSpawner(KubeSpawner):
             return False
         self.log.info("Clear to delete namespace '%s'" % namespace)
         self.log.info("Deleting namespace '%s'" % namespace)
-        self.api.delete_namespace(namespace, client.V1DeleteOptions())
+        self.api.delete_namespace(namespace)
         return True
 
     def _get_nfs_volume(self, name):
