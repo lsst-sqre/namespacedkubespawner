@@ -567,9 +567,8 @@ class NamespacedKubeSpawner(KubeSpawner):
                            "namespace '%r'" % namespace)
             return
         vols = self._get_nfs_volumes(suffix="-" + namespace)
-        dopts = client.V1DeleteOptions()
         for v in vols:
-            self.api.delete_persistent_volume(v.metadata.name, dopts)
+            self.api.delete_persistent_volume(v.metadata.name)
 
     def _create_pvc_for_pv(self, vol):
         name = vol.metadata.name
