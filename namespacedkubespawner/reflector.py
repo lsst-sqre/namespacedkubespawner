@@ -90,7 +90,8 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
             self.kind, log_selector, ns,
         )
         while True:
-            self.log.debug("Connecting %s watcher", self.kind)
+            # This log is super-spammy, so don't do it.
+            # self.log.debug("Connecting %s watcher", self.kind)
             start = time.monotonic()
             w = watch.Watch()
             try:
@@ -160,7 +161,9 @@ class MultiNamespaceResourceReflector(NamespacedResourceReflector):
                 continue
             else:
                 # no events on watch, reconnect
-                self.log.debug("%s watcher timeout", self.kind)
+                # This is super-spammy, so don't log it
+                # self.log.debug("%s watcher timeout", self.kind)
+                pass
             finally:
                 w.stop()
                 if self._stop_event.is_set():
