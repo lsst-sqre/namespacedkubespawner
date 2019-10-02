@@ -638,8 +638,13 @@ class NamespacedKubeSpawner(KubeSpawner):
             client.V1PolicyRule(
                 api_groups=[""],
                 resources=["pods"],
-                verbs=["list", "create", "delete"]
-            )
+                verbs=["get", "list", "watch", "create", "delete"]
+            ),
+            client.V1PolicyRule(
+                api_groups=[""],
+                resources=["pods/log"],
+                verbs=["get", "list"]
+            ),
         ]
         role = client.V1Role(
             rules=rules,
