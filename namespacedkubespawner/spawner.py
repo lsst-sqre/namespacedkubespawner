@@ -637,7 +637,7 @@ class NamespacedKubeSpawner(KubeSpawner):
         rules = [
             client.V1PolicyRule(
                 api_groups=[""],
-                resources=["pods"],
+                resources=["pods", "services"],
                 verbs=["get", "list", "watch", "create", "delete"]
             ),
             client.V1PolicyRule(
